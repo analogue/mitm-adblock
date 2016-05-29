@@ -18,3 +18,15 @@ $ pip install re2 adblockparser
  5. Setup your browser/phone to use `localhost:8118` or `lan-ip-address:8118` as an HTTP proxy server; then, visit http://mitm.it on that device to install the MITM SSL certificate so that your machine won't throw security warnings whenever the proxy server intercepts your secure connections.
 
 If you'd like to change any of the mitmproxy settings (like port, and where/whether it logs your connections), edit the `go` script.
+
+Ubuntu 14.04 LTS
+================
+
+$ git clone https://github.com/google/re2.git
+$ cd re2
+$ # uncomment BUILD_TABLES=1 from Makefile
+$ make
+$ make install
+
+$ sudo apt-get install libjpeg-dev
+    

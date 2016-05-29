@@ -6,62 +6,99 @@ An mitmproxy adblock script!
 """
 
 import re2
-from libmproxy.script import concurrent
-from libmproxy.protocol.http import HTTPResponse
+import requests
+from mitmproxy.script import concurrent
+from mitmproxy.protocol.http import HTTPResponse
+from netlib.http.headers import Headers
 from netlib.odict import ODictCaseless
 from adblockparser import AdblockRules
 from glob import glob
-
+import yaml
+import os.path
+import time
+from time import mktime, strptime
 
 
 def combined(filenames):
-  '''
-  Open and combine many files into a single generator which returns all
-  of their lines. (Like running "cat" on a bunch of files.)
-  '''
-  for filename in filenames:
-    with open(filename) as file:
-      for line in file:
-        yield line
+    """
+    Open and combine many files into a single generator which returns all
+    of their lines. (Like running "cat" on a bunch of files.)
+    """
+    for filename in filenames:
+        with open(filename) as f:
+            for line in f:
+                yield line
+
+
+def update_blocklists(context, config):
+    blocklists_dir = config['blocklists_dir']
+
+    if not os.path.exists(blocklists_dir):
+        os.mkdir(blocklists_dir)
+
+    def is_stale(dest, url):
+        # TODO: fix, not working
+        return False
+        # if file timestamp < url timestamp  then download
+        file_ts = os.path.getmtime(dest)
+        response = requests.head(blocklist_url)
+        url_ts = mktime(strptime(response.headers['Last-Modified'], "%a, %d %b %Y %H:%M:%S %Z"))
+        return file_ts < url_ts
+
+    blocklists = []
+    for blocklist_url in config['blocklists']:
+        dest = os.path.join(blocklists_dir, os.path.basename(blocklist_url))
+        download = True
+
+        if os.path.exists(dest):
+            download = False
+            #if not is_stale(dest, blocklist_url):
+            #    download = False
+
+        if download:
+            context.log("Downloading %s" % blocklist_url)
+            response = requests.get(blocklist_url)
+            with open(dest, 'w') as f:
+                f.write(response.content)
+
+        blocklists.append(dest)
+
+    return blocklists
 
 
 def load_rules(blocklists=None):
-  rules = AdblockRules( 
-    combined(blocklists), 
-    use_re2=True, 
-    max_mem=512*1024*1024
-    # supported_options=['script', 'domain', 'image', 'stylesheet', 'object'] 
-  )
+    rules = AdblockRules(
+        combined(blocklists),
+        use_re2=True,
+        max_mem=512*1024*1024,
+        # supported_options=['script', 'domain', 'image', 'stylesheet', 'object']
+    )
+    return rules
 
-  return rules
 
 def start(context, argv):
-    '''
+    """
     Called once on script startup, before any other events.
-    '''
-
+    """
     global rules
 
-    blocklists = glob("easylists/*")
+    with open('adblock.yaml', 'r') as f:
+        config = yaml.safe_load(f.read())
+    blocklists = update_blocklists(context, config)
 
-    if len(blocklists) == 0:
-      context.log("Error, no blocklists found in 'easylists/'. Please run the 'update-blocklists' script.")
-      raise SystemExit
-
-    else:
-      context.log("* Loading adblock rules...")
-      for list in blocklists:
-        context.log("  |_ %s" % list)
+    context.log("* Loading adblock rules...")
+    for blocklist in blocklists:
+        context.log("  |_ %s" % blocklist)
 
     rules = load_rules(blocklists)
     context.log("")
     context.log("* Done! Proxy server is ready to go!")
 
 
-
-IMAGE_MATCHER      = re2.compile(r"\.(png|jpe?g|gif)$")
-SCRIPT_MATCHER     = re2.compile(r"\.(js)$")
+IMAGE_MATCHER = re2.compile(r"\.(png|jpe?g|gif)$")
+SCRIPT_MATCHER = re2.compile(r"\.(js)$")
 STYLESHEET_MATCHER = re2.compile(r"\.(css)$")
+
 
 @concurrent
 def request(context, flow):
@@ -102,12 +139,23 @@ def request(context, flow):
         #     "BLOCKED."
         # )
 
+        # def __init__(
+        #         self,
+        #         http_version,
+        #         status_code,
+        #         reason,
+        #         headers,
+        #         content,
+        #         timestamp_start=None,
+        #         timestamp_end=None,
+        #         is_replay=False
+
         resp = HTTPResponse(
-            (1,1), 
+            b"HTTP/1.1", #(1,1),
             200, 
             "OK",
-            Headers(content_type="text/html"),
-            "BLOCKED."
+            Headers(content_type="text/html; charset=utf-8"),
+            b"BLOCKED",
         )
 
         flow.reply(resp)
@@ -158,3 +206,8 @@ Exposes the following attributes:
 
     timestamp_end: Timestamp indicating when request transmission ended
 """
+
+if __name__ == '__main__':
+    with open('adblock.yaml', 'r') as f:
+        config = yaml.safe_load(f.read())
+    update_blocklists(config)
